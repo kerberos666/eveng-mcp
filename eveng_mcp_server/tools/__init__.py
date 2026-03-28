@@ -1,4 +1,4 @@
-refactor(tools): modular registration of new console, topology, pcap and system tools
+"""Tools module for EVE-NG MCP Server."""
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
