@@ -598,3 +598,176 @@ def register_node_tools(mcp: "FastMCP", eveng_client: "EVENGClientWrapper") -> N
                 type="text",
                 text=f"Failed to delete node: {str(e)}"
             )]
+
+    @mcp.tool()
+    async def configure_node(
+        lab_path: str,
+        node_id: str,
+        config: str,
+    ) -> list[TextContent]:
+        """
+        Set the startup configuration of a node.
+
+        Injects a startup configuration (e.g., IOS CLI commands)
+        into a node. The config will be loaded when the node
+        next boots. Node must be in stopped/wiped state.
+        Directly inspired by cml-mcp configure_cml_node.
+
+        This is more efficient than starting a node and sending
+        CLI commands via console - use this for initial provisioning.
+
+        Args:
+            lab_path: Full path to the lab (e.g., /my_lab.unl)
+            node_id: The node ID to configure
+            config: The startup configuration text (e.g., IOS config commands)
+        """
+        try:
+            logger.info(f"Configuring node {node_id} in {lab_path}")
+            if not eveng_client.is_connected:
+                return [TextContent(
+                    type="text",
+                    text="Not connected to EVE-NG server. Use connect_eveng_server tool first."
+                )]
+
+            result = await asyncio.to_thread(
+                eveng_client.api.set_node_config,
+                lab_path,
+                node_id,
+                config
+            )
+
+            config_preview = config[:200] + "..." if len(config) > 200 else config
+            return [TextContent(
+                type="text",
+                text=(
+                    f"Startup config set for node {node_id} in {lab_path}.\n\n"
+                    f"Config preview (first 200 chars):\n{config_preview}\n\n"
+                    f"The configuration will be loaded on next node start."
+                )
+            )]
+        except Exception as e:
+            logger.error(f"Failed to configure node: {e}")
+            return [TextContent(
+                type="text",
+                text=f"Failed to configure node {node_id}: {str(e)}"
+            )]
+
+    @mcp.tool()
+    async def get_node_startup_config(
+        lab_path: str,
+        node_id: str,
+    ) -> list[TextContent]:
+        """
+        Get the current startup configuration of a node.
+
+        Retrieves the stored startup configuration text for a
+        node. Useful for viewing what config will be loaded on
+        next boot, or for auditing node configurations.
+        Inspired by cml-mcp configure_cml_node (read direction).
+
+        Args:
+            lab_path: Full path to the lab (e.g., /my_lab.unl)
+            node_id: The node ID to read config from
+        """
+        try:
+            logger.info(f"Getting startup config for node {node_id} in {lab_path}")
+            if not eveng_client.is_connected:
+                return [TextContent(
+                    type="text",
+                    text="Not connected to EVE-NG server. Use connect_eveng_server tool first."
+                )]
+
+            result = await asyncio.to_thread(
+                eveng_client.api.get_node_config,
+                lab_path,
+                node_id
+            )
+
+            config_text = result.get("data", "") if isinstance(result, dict) else str(result)
+
+            if not config_text or config_text == "Unconfigured":
+                return [TextContent(
+                    type="text",
+                    text=f"Node {node_id} has no startup configuration (Unconfigured)."
+                )]
+
+            return [TextContent(
+                type="text",
+                text=(
+                    f"Startup config for node {node_id} in {lab_path}:\n"
+                    f"{'=' * 60}\n\n"
+                    f"{config_text}"
+                )
+            )]
+        except Exception as e:
+            logger.error(f"Failed to get node config: {e}")
+            return [TextContent(
+                type="text",
+                text=f"Failed to get startup config for node {node_id}: {str(e)}"
+            )]
+
+    @mcp.tool()
+    async def wait_for_node(
+        lab_path: str,
+        node_id: str,
+        target_status: int = 2,
+        timeout_seconds: int = 120,
+        poll_interval: int = 5,
+    ) -> list[TextContent]:
+        """
+        Wait for a node to reach a specific operational status.
+
+        Polls the node status until it reaches the target state
+        or the timeout is exceeded. Useful after start_node to
+        confirm the node is fully up before sending CLI commands.
+        Inspired by cml-mcp start_cml_node wait_for_convergence.
+
+        Args:
+            lab_path: Full path to the lab (e.g., /my_lab.unl)
+            node_id: The node ID to monitor
+            target_status: Target status code (0=Stopped, 1=Starting, 2=Running, 3=Stopping)
+            timeout_seconds: Max seconds to wait before giving up (default: 120)
+            poll_interval: Seconds between status checks (default: 5)
+        """
+        try:
+            logger.info(f"Waiting for node {node_id} to reach status {target_status}")
+            if not eveng_client.is_connected:
+                return [TextContent(
+                    type="text",
+                    text="Not connected to EVE-NG server. Use connect_eveng_server tool first."
+                )]
+
+            status_labels = {0: "Stopped", 1: "Starting", 2: "Running", 3: "Stopping"}
+            target_label = status_labels.get(target_status, str(target_status))
+
+            elapsed = 0
+            while elapsed < timeout_seconds:
+                node_resp = await eveng_client.get_node(lab_path, node_id)
+                current_status = node_resp.get("data", {}).get("status", -1)
+
+                if current_status == target_status:
+                    return [TextContent(
+                        type="text",
+                        text=(
+                            f"Node {node_id} reached status '{target_label}' "
+                            f"after {elapsed} seconds."
+                        )
+                    )]
+
+                await asyncio.sleep(poll_interval)
+                elapsed += poll_interval
+
+            current_label = status_labels.get(current_status, str(current_status))
+            return [TextContent(
+                type="text",
+                text=(
+                    f"Timeout after {timeout_seconds}s waiting for node {node_id}.\n"
+                    f"Current status: '{current_label}' (expected: '{target_label}')."
+                )
+            )]
+        except Exception as e:
+            logger.error(f"Failed to wait for node: {e}")
+            return [TextContent(
+                type="text",
+                text=f"Failed to wait for node {node_id}: {str(e)}"
+            )]
