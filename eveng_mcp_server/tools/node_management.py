@@ -1,5 +1,7 @@
 """Node management tools for EVE-NG MCP Server."""
 
+import asyncio
+
 import json
 from typing import Any, Dict, List, Optional, TYPE_CHECKING
 from mcp.types import TextContent, Tool
