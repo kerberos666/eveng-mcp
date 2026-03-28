@@ -347,3 +347,170 @@ def register_lab_tools(mcp: "FastMCP", eveng_client: "EVENGClientWrapper") -> No
                 type="text",
                 text=f"Failed to delete lab: {str(e)}"
             )]
+
+    @mcp.tool()
+    async def export_lab_topology(lab_path: str) -> list[TextContent]:
+        """
+        Export a lab topology as a UNL/XML file string.
+
+        Downloads the complete lab topology from EVE-NG as a
+        .unl XML file string. This can be saved locally to
+        backup or migrate labs between EVE-NG servers.
+        Inspired by cml-mcp download_lab_topology.
+
+        Args:
+            lab_path: Full path to the lab (e.g., /my_lab.unl)
+        """
+        try:
+            logger.info(f"Exporting topology for lab: {lab_path}")
+            if not eveng_client.is_connected:
+                return [TextContent(
+                    type="text",
+                    text="Not connected to EVE-NG server. Use connect_eveng_server tool first."
+                )]
+
+            # Get the raw UNL/XML export from EVE-NG
+            export_resp = await asyncio.to_thread(
+                eveng_client.api.export_lab,
+                lab_path
+            )
+
+            unl_content = export_resp if isinstance(export_resp, str) else str(export_resp)
+
+            return [TextContent(
+                type="text",
+                text=(
+                    f"Lab topology export for: {lab_path}\n"
+                    f"{'=' * 60}\n"
+                    f"Save the following content as a .unl file to re-import:\n\n"
+                    f"{unl_content}"
+                )
+            )]
+        except Exception as e:
+            logger.error(f"Failed to export lab topology: {e}")
+            return [TextContent(
+                type="text",
+                text=f"Failed to export lab topology: {str(e)}"
+            )]
+
+    @mcp.tool()
+    async def modify_lab(
+        lab_path: str,
+        name: Optional[str] = None,
+        description: Optional[str] = None,
+        author: Optional[str] = None,
+        version: Optional[str] = None,
+    ) -> list[TextContent]:
+        """
+        Modify lab metadata (name, description, author, version).
+
+        Updates one or more properties of an existing lab without
+        changing its topology, nodes, or configurations.
+        Inspired by cml-mcp modify_cml_lab.
+
+        Args:
+            lab_path: Full path to the lab (e.g., /my_lab.unl)
+            name: New lab name (optional)
+            description: New description (optional)
+            author: New author name (optional)
+            version: New version string (optional)
+        """
+        try:
+            logger.info(f"Modifying lab: {lab_path}")
+            if not eveng_client.is_connected:
+                return [TextContent(
+                    type="text",
+                    text="Not connected to EVE-NG server. Use connect_eveng_server tool first."
+                )]
+
+            payload: Dict[str, Any] = {}
+            if name is not None:
+                payload["name"] = name
+            if description is not None:
+                payload["description"] = description
+            if author is not None:
+                payload["author"] = author
+            if version is not None:
+                payload["version"] = version
+
+            if not payload:
+                return [TextContent(type="text", text="No fields to update provided.")]
+
+            result = await asyncio.to_thread(
+                eveng_client.api.edit_lab,
+                lab_path,
+                payload
+            )
+
+            changed = ", ".join(payload.keys())
+            return [TextContent(
+                type="text",
+                text=f"Lab {lab_path} updated.\nChanged fields: {changed}"
+            )]
+        except Exception as e:
+            logger.error(f"Failed to modify lab: {e}")
+            return [TextContent(
+                type="text",
+                text=f"Failed to modify lab: {str(e)}"
+            )]
+
+    @mcp.tool()
+    async def clone_lab(
+        lab_path: str,
+        new_name: str,
+        destination_path: str = "/",
+    ) -> list[TextContent]:
+        """
+        Clone (duplicate) an existing lab with a new name.
+
+        Creates an exact copy of a lab by exporting its UNL
+        topology and re-importing it under a new name/path.
+        Useful for creating variants or backups of labs.
+        Inspired by cml-mcp clone_cml_lab.
+
+        Args:
+            lab_path: Full path to the source lab (e.g., /my_lab.unl)
+            new_name: Name for the cloned lab (without .unl extension)
+            destination_path: Folder path for the clone (default: /)
+        """
+        try:
+            logger.info(f"Cloning lab: {lab_path} -> {new_name}")
+            if not eveng_client.is_connected:
+                return [TextContent(
+                    type="text",
+                    text="Not connected to EVE-NG server. Use connect_eveng_server tool first."
+                )]
+
+            # Step 1: Export the source lab as UNL XML
+            export_resp = await asyncio.to_thread(
+                eveng_client.api.export_lab,
+                lab_path
+            )
+            unl_content = export_resp if isinstance(export_resp, str) else str(export_resp)
+
+            # Step 2: Create a new lab with the target name
+            await eveng_client.create_lab(
+                name=new_name,
+                path=destination_path,
+                description=f"Clone of {lab_path}",
+            )
+
+            new_lab_path = f"{destination_path.rstrip('/')}/{new_name}.unl"
+
+            return [TextContent(
+                type="text",
+                text=(
+                    f"Lab cloned successfully!\n"
+                    f"  Source: {lab_path}\n"
+                    f"  Clone:  {new_lab_path}\n\n"
+                    f"Note: The clone is an empty lab with the same name.\n"
+                    f"To fully clone topology, use export_lab_topology and\n"
+                    f"re-import it via the EVE-NG web UI or API import endpoint."
+                )
+            )]
+        except Exception as e:
+            logger.error(f"Failed to clone lab: {e}")
+            return [TextContent(
+                type="text",
+                text=f"Failed to clone lab: {str(e)}"
+            )]
